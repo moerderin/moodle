@@ -55,4 +55,12 @@ Documentation:
 -change file
 -git commit -a -m "updating README.txt to include basic git instructions"
 -git push origin DEV (or <feature_name> if working on a feature branch)
--
+
+if working on feature branch:
+-git checkout DEV
+-git merge --no-ff <feature_name>
+-git push
+
+-git checkout TEST
+-git merge DEV
+-git push
