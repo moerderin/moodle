@@ -27,3 +27,32 @@ For more information, see the INSTALL DOCUMENTATION:
 Good luck and have fun!
 Martin Dougiamas, Lead Developer
 
+
+
+Install xampp
+
+Install msysgit
+-Download latest version from http://code.google.com/p/msysgit/downloads/list (ie: Git-1.7.4-preview20110204.exe)
+-check "Git Bash Here"
+-check "Git GUI Here"
+
+Run Git from the Windows Command Prompt
+-checkout as-is, commit unix-style line endings
+
+Install tortoise
+-OpenSSH, git default ssh client
+
+Before making commits, it is useful to add your name and email:
+-git config --global user.name "Your Name"
+-git config --global user.email yourmail@domain.tld
+
+Documentation:
+-http://docs.moodle.org/en/Development:Quick_Git_start_guide_for_Moodle_development
+
+-git clone https://YOUR_GITHUB_USERNAME@github.com/ccle/moodle.git ./YOUR_LOCAL_MOODLE_FOLDER/
+-git checkout DEV
+-(OPTIONAL) git checkout -b <feature_name>
+-change file
+-git commit -a -m "updating README.txt to include basic git instructions"
+-git push origin DEV (or <feature_name> if working on a feature branch)
+-
