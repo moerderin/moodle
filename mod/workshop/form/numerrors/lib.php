@@ -53,6 +53,7 @@ function workshopform_numerrors_pluginfile($course, $cm, $context, $filearea, ar
 
     // TODO now make sure the user is allowed to see the file
     // (media embedded into the dimension description)
+
     $fs = get_file_storage();
     $relativepath = implode('/', $args);
     $fullpath = "/$context->id/workshopform_numerrors/$filearea/$itemid/$relativepath";
