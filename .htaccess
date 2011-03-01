@@ -1,7 +1,0 @@
-# dtran - 10-26-2010
-# This file was added to secure all connections at the moodle root level
-# /usr/local/moodle/root
-#
-RewriteEngine On
-RewriteCond %{HTTPS} off
-RewriteRule (.*) https://%{HTTP_HOST}%{REQUEST_URI}
