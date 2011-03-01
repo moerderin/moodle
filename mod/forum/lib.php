@@ -920,6 +920,7 @@ function forum_cron() {
 
                 $attachment = $attachname='';
                 $usetrueaddress = true;
+                //directly email forum digests rather than sending them via messaging
                 $mailresult = email_to_user($userto, $site->shortname, $postsubject, $posttext, $posthtml, $attachment, $attachname, $usetrueaddress, $CFG->forum_replytouser);
 
                 if (!$mailresult) {
@@ -979,15 +980,15 @@ function forum_cron() {
 function forum_make_mail_text($course, $cm, $forum, $discussion, $post, $userfrom, $userto, $bare = false) {
     global $CFG, $USER;
 
+    $modcontext = get_context_instance(CONTEXT_MODULE, $cm->id);
+
     if (!isset($userto->viewfullnames[$forum->id])) {
-        $modcontext = get_context_instance(CONTEXT_MODULE, $cm->id);
         $viewfullnames = has_capability('moodle/site:viewfullnames', $modcontext, $userto->id);
     } else {
         $viewfullnames = $userto->viewfullnames[$forum->id];
     }
 
     if (!isset($userto->canpost[$discussion->id])) {
-        $modcontext = get_context_instance(CONTEXT_MODULE, $cm->id);
         $canreply = forum_user_can_post($forum, $discussion, $userto, $cm, $course, $modcontext);
     } else {
         $canreply = $userto->canpost[$discussion->id];
@@ -1012,6 +1013,9 @@ function forum_make_mail_text($course, $cm, $forum, $discussion, $post, $userfro
             $posttext  .= " -> ".format_string($discussion->name,true);
         }
     }
+
+    // add absolute file links
+    $post->message = file_rewrite_pluginfile_urls($post->message, 'pluginfile.php', $modcontext->id, 'mod_forum', 'post', $post->id);
 
     $posttext .= "\n---------------------------------------------------------------------\n";
     $posttext .= format_string($post->subject,true);
@@ -1503,7 +1507,8 @@ function forum_upgrade_grades() {
     $sql = "SELECT f.*, cm.idnumber AS cmidnumber, f.course AS courseid
               FROM {forum} f, {course_modules} cm, {modules} m
              WHERE m.name='forum' AND m.id=cm.module AND cm.instance=f.id";
-    if ($rs = $DB->get_recordset_sql($sql)) {
+    $rs = $DB->get_recordset_sql($sql);
+    if ($rs->valid()) {
         $pbar = new progress_bar('forumupgradegrades', 500, true);
         $i=0;
         foreach ($rs as $forum) {
@@ -1512,8 +1517,8 @@ function forum_upgrade_grades() {
             forum_update_grades($forum, 0, false);
             $pbar->update($i, $count, "Updating Forum grades ($i/$count).");
         }
-        $rs->close();
     }
+    $rs->close();
 }
 
 /**
@@ -1810,7 +1815,7 @@ function forum_get_readable_forums($userid, $courseid=0) {
     } else {
         // If no course is specified, then the user can see SITE + his courses.
         $courses1 = $DB->get_records('course', array('id' => SITEID));
-        $courses2 = enrol_get_users_courses($userid, true);
+        $courses2 = enrol_get_users_courses($userid, true, array('modinfo'));
         $courses = array_merge($courses1, $courses2);
     }
     if (!$courses) {
@@ -1927,8 +1932,8 @@ function forum_search_posts($searchterms, $courseid=0, $limitfrom=0, $limitnum=5
         $select = array();
 
         if (!$forum->viewhiddentimedposts) {
-            $select[] = "(d.userid = :userid OR (d.timestart < : AND (d.timeend = 0 OR d.timeend > :timeend)))";
-            $params = array('userid'=>$USER->id, 'timestart'=>$now, 'timeend'=>$now);
+            $select[] = "(d.userid = :userid{$forumid} OR (d.timestart < :timestart{$forumid} AND (d.timeend = 0 OR d.timeend > :timeend{$forumid})))";
+            $params = array_merge($params, array('userid'.$forumid=>$USER->id, 'timestart'.$forumid=>$now, 'timeend'.$forumid=>$now));
         }
 
         $cm = $forum->cm;
@@ -1937,7 +1942,7 @@ function forum_search_posts($searchterms, $courseid=0, $limitfrom=0, $limitnum=5
         if ($forum->type == 'qanda'
             && !has_capability('mod/forum:viewqandawithoutposting', $context)) {
             if (!empty($forum->onlydiscussions)) {
-                list($discussionid_sql, $discussionid_params) = $DB->get_in_or_equal($forum->onlydiscussions, SQL_PARAMS_NAMED, 'qanda0');
+                list($discussionid_sql, $discussionid_params) = $DB->get_in_or_equal($forum->onlydiscussions, SQL_PARAMS_NAMED, 'qanda'.$forumid.'_0000');
                 $params = array_merge($params, $discussionid_params);
                 $select[] = "(d.id $discussionid_sql OR p.parent = 0)";
             } else {
@@ -1946,15 +1951,15 @@ function forum_search_posts($searchterms, $courseid=0, $limitfrom=0, $limitnum=5
         }
 
         if (!empty($forum->onlygroups)) {
-            list($groupid_sql, $groupid_params) = $DB->get_in_or_equal($forum->onlygroups, SQL_PARAMS_NAMED, 'grps0');
+            list($groupid_sql, $groupid_params) = $DB->get_in_or_equal($forum->onlygroups, SQL_PARAMS_NAMED, 'grps'.$forumid.'_0000');
             $params = array_merge($params, $groupid_params);
             $select[] = "d.groupid $groupid_sql";
         }
 
         if ($select) {
             $selects = implode(" AND ", $select);
-            $where[] = "(d.forum = :forum AND $selects)";
-            $params['forum'] = $forumid;
+            $where[] = "(d.forum = :forum{$forumid} AND $selects)";
+            $params['forum'.$forumid] = $forumid;
         } else {
             $fullaccess[] = $forumid;
         }
@@ -2977,15 +2982,16 @@ function forum_make_mail_post($course, $cm, $forum, $discussion, $post, $userfro
 
     global $CFG, $OUTPUT;
 
+    $modcontext = get_context_instance(CONTEXT_MODULE, $cm->id);
+
     if (!isset($userto->viewfullnames[$forum->id])) {
-        if (!$cm = get_coursemodule_from_instance('forum', $forum->id, $course->id)) {
-            print_error('invalidcoursemodule');
-        }
-        $modcontext = get_context_instance(CONTEXT_MODULE, $cm->id);
         $viewfullnames = has_capability('moodle/site:viewfullnames', $modcontext, $userto->id);
     } else {
         $viewfullnames = $userto->viewfullnames[$forum->id];
     }
+
+    // add absolute file links
+    $post->message = file_rewrite_pluginfile_urls($post->message, 'pluginfile.php', $modcontext->id, 'mod_forum', 'post', $post->id);
 
     // format the post body
     $options = new stdClass();
@@ -3018,10 +3024,7 @@ function forum_make_mail_post($course, $cm, $forum, $discussion, $post, $userfro
     if (isset($userfrom->groups)) {
         $groups = $userfrom->groups[$forum->id];
     } else {
-        if (!$cm = get_coursemodule_from_instance('forum', $forum->id, $course->id)) {
-            print_error('invalidcoursemodule');
-        }
-        $group = groups_get_all_groups($course->id, $userfrom->id, $cm->groupingid);
+        $groups = groups_get_all_groups($course->id, $userfrom->id, $cm->groupingid);
     }
 
     if ($groups) {
@@ -3109,6 +3112,8 @@ function forum_print_post($post, $discussion, $forum, &$cm, $course, $ownpost=fa
                           $footer="", $highlight="", $postisread=null, $dummyifcantsee=true, $istracked=null, $return=false) {
     global $USER, $CFG, $OUTPUT;
 
+    require_once($CFG->libdir . '/filelib.php');
+
     // String cache
     static $str;
 
@@ -3154,7 +3159,7 @@ function forum_print_post($post, $discussion, $forum, &$cm, $course, $ownpost=fa
             return;
         }
         $output .= html_writer::tag('a', '', array('id'=>'p'.$post->id));
-        $output .= html_writer::start_tag('div', array('class'=>'forumpost clearfix '.$forumpostclass));
+        $output .= html_writer::start_tag('div', array('class'=>'forumpost clearfix'));
         $output .= html_writer::start_tag('div', array('class'=>'row header'));
         $output .= html_writer::tag('div', '', array('class'=>'left picture')); // Picture
         if ($post->parent) {
@@ -3164,6 +3169,7 @@ function forum_print_post($post, $discussion, $forum, &$cm, $course, $ownpost=fa
         }
         $output .= html_writer::tag('div', get_string('forumsubjecthidden','forum'), array('class'=>'subject')); // Subject
         $output .= html_writer::tag('div', get_string('forumauthorhidden','forum'), array('class'=>'author')); // author
+        $output .= html_writer::end_tag('div');
         $output .= html_writer::end_tag('div'); // row
         $output .= html_writer::start_tag('div', array('class'=>'row'));
         $output .= html_writer::tag('div', '&nbsp;', array('class'=>'left side')); // Groups
@@ -4503,10 +4509,11 @@ function forum_get_subscribe_link($forum, $context, $messages = array(), $cantac
 
         if ($fakelink) {
             $PAGE->requires->js('/mod/forum/forum.js');
-            $PAGE->requires->js_function_call('forum_produce_subscribe_link', Array($forum->id, $backtoindexlink, $linktext, $linktitle));
+            $PAGE->requires->js_function_call('forum_produce_subscribe_link', array($forum->id, $backtoindexlink, $linktext, $linktitle));
             $link = "<noscript>";
         }
-        $options ['id'] = $forum->id;
+        $options['id'] = $forum->id;
+        $options['sesskey'] = sesskey();
         $url = new moodle_url('/mod/forum/subscribe.php', $options);
         $link .= $OUTPUT->single_button($url, $linktext, 'get', array('title'=>$linktitle));
         if ($fakelink) {
@@ -5312,7 +5319,7 @@ function forum_print_discussion($course, $cm, $forum, $discussion, $post, $mode,
     //load ratings
     if ($forum->assessed!=RATING_AGGREGATE_NONE) {
         $ratingoptions = new stdclass();
-        $ratingoptions->context = $cm->context;
+        $ratingoptions->context = $modcontext;
         $ratingoptions->items = $posts;
         $ratingoptions->aggregate = $forum->assessed;//the aggregation method
         $ratingoptions->scaleid = $forum->scale;
@@ -7495,10 +7502,10 @@ function forum_extend_settings_navigation(settings_navigation $settingsnav, navi
     if ($canmanage) {
         $mode = $forumnode->add(get_string('subscriptionmode', 'forum'), null, navigation_node::TYPE_CONTAINER);
 
-        $allowchoice = $mode->add(get_string('subscriptionoptional', 'forum'), new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'mode'=>'0')), navigation_node::TYPE_SETTING);
-        $forceforever = $mode->add(get_string("subscriptionforced", "forum"), new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'mode'=>'1')), navigation_node::TYPE_SETTING);
-        $forceinitially = $mode->add(get_string("subscriptionauto", "forum"), new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'mode'=>'2')), navigation_node::TYPE_SETTING);
-        $disallowchoice = $mode->add(get_string('subscriptiondisabled', 'forum'), new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'mode'=>'3')), navigation_node::TYPE_SETTING);
+        $allowchoice = $mode->add(get_string('subscriptionoptional', 'forum'), new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'mode'=>FORUM_CHOOSESUBSCRIBE, 'sesskey'=>sesskey())), navigation_node::TYPE_SETTING);
+        $forceforever = $mode->add(get_string("subscriptionforced", "forum"), new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'mode'=>FORUM_FORCESUBSCRIBE, 'sesskey'=>sesskey())), navigation_node::TYPE_SETTING);
+        $forceinitially = $mode->add(get_string("subscriptionauto", "forum"), new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'mode'=>FORUM_INITIALSUBSCRIBE, 'sesskey'=>sesskey())), navigation_node::TYPE_SETTING);
+        $disallowchoice = $mode->add(get_string('subscriptiondisabled', 'forum'), new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'mode'=>FORUM_DISALLOWSUBSCRIBE, 'sesskey'=>sesskey())), navigation_node::TYPE_SETTING);
 
         switch ($subscriptionmode) {
             case FORUM_CHOOSESUBSCRIBE : // 0
@@ -7543,7 +7550,7 @@ function forum_extend_settings_navigation(settings_navigation $settingsnav, navi
         } else {
             $linktext = get_string('subscribe', 'forum');
         }
-        $url = new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id));
+        $url = new moodle_url('/mod/forum/subscribe.php', array('id'=>$forumobject->id, 'sesskey'=>sesskey()));
         $forumnode->add($linktext, $url, navigation_node::TYPE_SETTING);
     }
 
@@ -7785,4 +7792,36 @@ class forum_existing_subscriber_selector extends forum_subscriber_selector_base 
         return array(get_string("existingsubscribers", 'forum') => $subscribers);
     }
 
+}
+
+/**
+ * Adds information about unread messages, that is only required for the course view page (and
+ * similar), to the course-module object.
+ * @param cm_info $cm Course-module object
+ */
+function forum_cm_info_view(cm_info $cm) {
+    global $CFG;
+
+    // Get tracking status (once per request)
+    static $initialised;
+    static $usetracking, $strunreadpostsone;
+    if (!isset($initialised)) {
+        if ($usetracking = forum_tp_can_track_forums()) {
+            $strunreadpostsone = get_string('unreadpostsone', 'forum');
+        }
+        $initialised = true;
+    }
+
+    if ($usetracking) {
+        if ($unread = forum_tp_count_forum_unread_posts($cm, $cm->get_course())) {
+            $out = '<span class="unread"> <a href="' . $cm->get_url() . '">';
+            if ($unread == 1) {
+                $out .= $strunreadpostsone;
+            } else {
+                $out .= get_string('unreadpostsnumber', 'forum', $unread);
+            }
+            $out .= '</a></span>';
+            $cm->set_after_link($out);
+        }
+    }
 }

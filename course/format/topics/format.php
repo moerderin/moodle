@@ -35,11 +35,7 @@ $topic = optional_param('topic', -1, PARAM_INT);
 if ($topic != -1) {
     $displaysection = course_set_display($course->id, $topic);
 } else {
-    if (isset($USER->display[$course->id])) {
-        $displaysection = $USER->display[$course->id];
-    } else {
-        $displaysection = course_set_display($course->id, 0);
-    }
+    $displaysection = course_get_display($course->id);
 }
 
 $context = get_context_instance(CONTEXT_COURSE, $course->id);
@@ -69,7 +65,7 @@ if ($editing) {
 
 // Print the Your progress icon if the track completion is enabled
 $completioninfo = new completion_info($course);
-$completioninfo->print_help_icon();
+echo $completioninfo->display_help_icon();
 
 echo $OUTPUT->heading(get_string('topicoutline'), 2, 'headingblock header outline');
 
